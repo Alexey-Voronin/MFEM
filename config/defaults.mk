@@ -54,17 +54,20 @@ endif
 # Command used to launch MPI jobs
 MFEM_MPIEXEC    = mpirun
 MFEM_MPIEXEC_NP = -np
+# Number of mpi tasks for parallel jobs
+MFEM_MPI_NP = 4
 
 # MFEM configuration options: YES/NO values, which are exported to config.mk and
 # config.hpp. The values below are the defaults for generating the actual values
 # in config.mk and config.hpp.
 
-MFEM_USE_MPI         = NO
+MFEM_USE_MPI         = YES
+MFEM_USE_METIS       = $(MFEM_USE_MPI)
 MFEM_USE_METIS_5     = NO
-MFEM_DEBUG           = NO
+MFEM_DEBUG           = YES
 MFEM_USE_GZSTREAM    = NO
 MFEM_USE_LIBUNWIND   = NO
-MFEM_USE_LAPACK      = NO
+MFEM_USE_LAPACK      = YES
 MFEM_THREAD_SAFE     = NO
 MFEM_USE_OPENMP      = NO
 MFEM_USE_MEMALLOC    = YES
@@ -85,7 +88,7 @@ LIBUNWIND_OPT = -g
 LIBUNWIND_LIB = $(if $(NOTMAC),-lunwind -ldl,)
 
 # HYPRE library configuration (needed to build the parallel version)
-HYPRE_DIR = @MFEM_DIR@/../hypre-2.10.0b/src/hypre
+HYPRE_DIR = @MFEM_DIR@/../hypre-2.10.0b_quartz/src/hypre
 HYPRE_OPT = -I$(HYPRE_DIR)/include
 HYPRE_LIB = -L$(HYPRE_DIR)/lib -lHYPRE
 
