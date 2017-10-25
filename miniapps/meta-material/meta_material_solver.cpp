@@ -98,6 +98,7 @@ Density::Density(ParMesh & pmesh, double refDensity, double vol,
    cellVol_->Assemble();
 
    *rho_ = 0.0;
+  
 }
 
 Density::~Density()
@@ -121,6 +122,7 @@ Density::SetVolumeFraction(ParGridFunction & vf)
 void
 Density::updateRho()
 {
+
    rho_->ProjectCoefficient(*rhoCoef_);
    double old_mass = cellVol_->operator()(*rho_);
    double mass = 2.0 * old_mass;
@@ -198,6 +200,7 @@ Density::updateRho()
       }
       iter++;
    }
+
 }
 
 void
@@ -1755,7 +1758,7 @@ void
 MaxwellBlochWaveEquation::SetInitialVectors(int num_vecs,
                                             HypreParVector ** vecs)
 {
-   if ( lobpcg_ )
+   if ( lobpcg_ && beta_ > 0 )
    {
       lobpcg_->SetInitialVectors(num_vecs, vecs);
    }
@@ -1770,13 +1773,15 @@ MaxwellBlochWaveEquation::Solve()
       {
          lobpcg_->Solve();
          vecs_ = lobpcg_->StealEigenvectors();
-         cout << "lobpcg done" << endl;
+         cout << "#vecs_[0].Size()=" << (vecs_[0])->Size() << endl;
+         cout << "#vecs_[1].Size()=" << (vecs_[1])->Size() << endl;
+         cout << "#lobpcg done" << endl;
       }
       else
       {
          ame_->Solve();
          //vecs_ = ame_->StealEigenvectors();
-         cout << "ame done" << endl;
+         cout << "#ame done" << endl;
       }
    }
    cout << "Solve done" << endl;
@@ -2591,7 +2596,8 @@ MaxwellBlochWaveSolver::MaxwellBlochWaveSolver(ParMesh & pmesh,
                                                Coefficient & muCoef,
                                                int max_ref,
                                                int nev,
-                                               double tol)
+                                               double tol,
+					       int groupID, int groupNum)
    : max_lvl_(max_ref)
    , nev_(nev)
    , tol_(tol)
@@ -2603,6 +2609,8 @@ MaxwellBlochWaveSolver::MaxwellBlochWaveSolver(ParMesh & pmesh,
    , part_(0)
    , epsCoef_(&epsCoef)
    , muInvCoef_(&muCoef)
+   , groupID_(groupID)
+   , groupNum_(groupNum)
 {
    pmesh_.push_back(&pmesh);
    mbwe_.push_back(new MaxwellBlochWaveEquation(*pmesh_[0], 1));
@@ -2737,6 +2745,7 @@ MaxwellBlochWaveSolver::GetEigenfrequencies(std::vector<double> & omega)
    mbwe_[0]->Setup();
    mbwe_[0]->Solve();
    mbwe_[0]->GetEigenvalues(fine_eigs);
+   cout << "#solve(lvl=0)\n";
    /*
    for (unsigned int i=0; i<fine_eigs.size(); i++)
    {
@@ -2750,6 +2759,7 @@ MaxwellBlochWaveSolver::GetEigenfrequencies(std::vector<double> & omega)
    double err = 2.0 * tol_;
    while (lvl < max_lvl_ && err > tol_)
    {
+      cout << "#solve(lvl=" << lvl << ")\tnev=" << nev_ << endl;
       coarse_eigs.resize(fine_eigs.size());
       for (unsigned int i=0; i<fine_eigs.size(); i++)
       {
@@ -2943,7 +2953,8 @@ MaxwellDispersion::MaxwellDispersion(ParMesh & pmesh,
                                      bool midPts,
                                      int max_ref,
                                      int nev,
-                                     double tol)
+                                     double tol, 
+				     int groupID, int groupNum)
    : bravais_(&bravais),
      Ax_(NULL),
      Mx_(NULL),
@@ -2951,10 +2962,16 @@ MaxwellDispersion::MaxwellDispersion(ParMesh & pmesh,
      n_div_(-1),
      samp_pow_(sample_power),
      nev_(nev),
-     midPts_(midPts)
+     midPts_(midPts),
+     groupID_(groupID),
+     groupNum_(groupNum)
 {
+
+   MPI_Comm_size(pmesh.GetComm(), &numProcs_);
+   MPI_Comm_rank(pmesh.GetComm(), &myid_);
+
    mbws_ = new MaxwellBlochWaveSolver(pmesh, bravais, epsCoef, muCoef,
-                                      max_ref, nev, tol);
+                                      max_ref, nev, tol, groupID, groupNum);
 
    if ( sample_power > n_pow_) { samp_pow_ = n_pow_; }
    n_div_ = (int)pow(2, n_pow_);
@@ -3131,59 +3148,108 @@ MaxwellDispersion::WriteVisItFields(const std::string & prefix,
 void
 MaxwellDispersion::buildRawBasis()
 {
+   int symPointsNum = 0;
    Vector kappa(3);
 
+   vector< string > indexToLabel; // (100);
+   map<string, Vector > labelToKappa;
+   if (!myid_)
+      cout << "\n-----------------\n";   
+
+   /* using map first accumulate all points needed to solve for without repetition */
    for (unsigned int p=0; p<bravais_->GetNumberPaths(); p++)
    {
       int e0 = -1, e1 = -1;
       string label0 = "", label1 = "", labelI = "";
-
-      // seg_eigs_[p].resize(bravais_->GetNumberPathSegments(p));
-
       for (unsigned int s=0; s<bravais_->GetNumberPathSegments(p); s++)
       {
          bravais_->GetPathSegmentEndPointIndices(p, s, e0, e1);
-
          label0 = bravais_->GetSymmetryPointLabel(e0);
          label1 = bravais_->GetSymmetryPointLabel(e1);
-         if ( midPts_)
-         {
-            labelI = bravais_->GetIntermediatePointLabel(p, s);
-         }
 
-         if ( sp_eigs_.find(label0) == sp_eigs_.end() )
+         if ( midPts_)
+            labelI = bravais_->GetIntermediatePointLabel(p, s);
+
+         if ( labelToKappa.find(label0) == labelToKappa.end() )
          {
             bravais_->GetSymmetryPoint(e0, kappa);
-            mbws_->SetKappa(kappa);
-            mbws_->GetEigenfrequencies(sp_eigs_[label0]);
-            for (unsigned int i=0; i<sp_eigs_[label0].size(); i++)
-            {
-               rawBasis_.push_back(mbws_->ReturnFineEigenvector(i));
-            }
+            labelToKappa.insert( make_pair(label0, kappa) ); 
          }
-         if ( midPts_ && sp_eigs_.find(labelI) == sp_eigs_.end() )
+
+         if ( midPts_ && labelToKappa.find(labelI) == labelToKappa.end() )
          {
             bravais_->GetIntermediatePoint(p, s, kappa);
-            mbws_->SetKappa(kappa);
-            mbws_->GetEigenfrequencies(sp_eigs_[labelI]);
-            for (unsigned int i=0; i<sp_eigs_[labelI].size(); i++)
-            {
-               rawBasis_.push_back(mbws_->ReturnFineEigenvector(i));
-            }
+            labelToKappa.insert( make_pair(labelI, kappa) ); 
          }
-         if ( sp_eigs_.find(label1) == sp_eigs_.end() )
+  
+         if ( labelToKappa.find(label1) == labelToKappa.end() )
          {
             bravais_->GetSymmetryPoint(e1, kappa);
-            mbws_->SetKappa(kappa);
-            mbws_->GetEigenfrequencies(sp_eigs_[label1]);
-            for (unsigned int i=0; i<sp_eigs_[label1].size(); i++)
-            {
-               rawBasis_.push_back(mbws_->ReturnFineEigenvector(i));
-            }
+            labelToKappa.insert( make_pair(label1, kappa) ); 
          }
       }
    }
-   cout << "Basis Size: " << rawBasis_.size() << endl;
+
+   /* create index to label map for more straightforward parallization among tasks */
+   for (map<string,Vector>::iterator it=labelToKappa.begin(); it!=labelToKappa.end(); ++it)
+      indexToLabel.insert(indexToLabel.begin(), it->first);
+
+   symPointsNum = indexToLabel.size();
+   if (!myid_)
+      cout << "groupID=" << groupID_ << "-----------------\n";   
+
+
+   /* figure out which symmetry points each group is responsible for */
+   int startIndex, endIndex;
+   if (groupID_ == -1)
+   {
+      startIndex = 0;
+      endIndex = symPointsNum;
+   }
+   else {
+      int allGroupsGet = symPointsNum / groupNum_;
+
+      /* if points do not divide evenly, give one extra to as many groups as needed.
+       * Ideally there will be about as many points as there are number of groups.
+       * If number of points is much bigger than number of groups, it may make sense
+       * to implement dynamic load balancing.
+       */
+      if (symPointsNum == allGroupsGet*groupNum_)
+      {
+          startIndex = groupID_*allGroupsGet;
+          endIndex = startIndex + allGroupsGet;
+      }
+      else { 
+         int extra = (symPointsNum - allGroupsGet*groupNum_); 
+
+         if (groupID_ < extra)
+         {
+            startIndex = groupID_*(allGroupsGet+1);
+            endIndex = startIndex + (allGroupsGet+1) ;
+         }       
+         else {
+            startIndex = extra*(allGroupsGet+1)+(groupID_-extra)*allGroupsGet;
+            endIndex = startIndex + allGroupsGet;
+         }
+      }
+      cout << "groupID=" << groupID_ << "\tstartIndex=" << startIndex << "\tendIndex=" << endIndex << endl;
+   }
+
+   // go find some eigen-vectors
+   for (unsigned int s=startIndex; s < endIndex ; s++)
+   {
+      string label0 = indexToLabel[s];
+      cout << "#indexToLabel[" << s << "]=" << label0 << endl;
+      mbws_->SetKappa( (labelToKappa.find(label0))->second );
+      mbws_->GetEigenfrequencies(sp_eigs_[label0]);
+
+      for (unsigned int i=0; i<sp_eigs_[label0].size(); i++)
+      {
+          rawBasis_.push_back(mbws_->ReturnFineEigenvector(i));
+      }
+   }
+   
+   exit(0);
 
    projBasis_.resize(rawBasis_.size());
    for (unsigned int i=0; i<rawBasis_.size(); i++)
@@ -3196,6 +3262,7 @@ MaxwellDispersion::buildRawBasis()
 void
 MaxwellDispersion::approxEigenfrequencies(std::vector<double> & omega)
 {
+
    A_.SetSize(rawBasis_.size());
    M_.SetSize(rawBasis_.size());
 
@@ -3238,7 +3305,7 @@ MaxwellDispersion::approxEigenfrequencies(std::vector<double> & omega)
                       NULL,
                       HCurlFESpace->GetTrueDofOffsets());
 
-   tic();
+   if (!myid_) tic();
 
    mbwe->Setup();
 
@@ -3246,8 +3313,8 @@ MaxwellDispersion::approxEigenfrequencies(std::vector<double> & omega)
    {
       mbwe->GetSubSpaceProjector()->Mult(*rawBasis_[i], *projBasis_[i]);
    }
-   cout << "Reduced Basis Projection Time: " << toc() << endl;
-   tic();
+   if (!myid_) cout << "@Reduced Basis Projection Time: " << toc() << endl;
+   if (!myid_) tic();
    for (unsigned int i=0; i<projBasis_.size(); i++)
    {
       mbwe->GetAOperator()->Mult(*projBasis_[i], *Ax_);
@@ -3267,9 +3334,10 @@ MaxwellDispersion::approxEigenfrequencies(std::vector<double> & omega)
          }
       }
    }
-   cout << "Reduced System Creation Time: " << toc() << endl;
+   if (!myid_) cout << "@Reduced System Creation Time: " << toc() << endl;
    vector<double> redEigs(rawBasis_.size());
-   tic();
+   if (!myid_) tic();
+
    {
       int ITYPE = 1;
       char JOBZ = 'V';
@@ -3302,7 +3370,8 @@ MaxwellDispersion::approxEigenfrequencies(std::vector<double> & omega)
 
       delete [] WORK;
    }
-   cout << "Reduced System Solve Time: " << toc() << endl;
+
+   if (!myid_) cout << "@Reduced System Solve Time: " << toc() << endl;
 
    cout << "Reduced Eigenvalues:" << endl;
    for (unsigned int i=0; i<redEigs.size(); i++)
@@ -3315,18 +3384,31 @@ MaxwellDispersion::approxEigenfrequencies(std::vector<double> & omega)
    {
       omega[i] = sqrt(fabs(redEigs[i]));
    }
+
 }
 
 void
 MaxwellDispersion::traverseBrillouinZone()
 {
+   if (!myid_) tic();
    this->buildRawBasis();
+   if (!myid_) cout << "@buildRawBasis Time: " << toc() << endl;
 
    Vector kappa(3);
    Vector kappa0(3);
    Vector kappa1(3);
 
    int ni = (int)pow(2, samp_pow_); // should be a power of 2
+
+   if (!myid_) 
+   {
+      cout << "\n-----------------\n";   
+      for (unsigned int p=0; p<bravais_->GetNumberPaths(); p++)
+         for (unsigned int s=0; s<bravais_->GetNumberPathSegments(p); s++)
+               for (int i=1; i<ni; i++)
+            cout << "traverseBrillouinZone: p=" << p << "\ts=" << s << "\ti="<< i << endl; 
+      cout << "-----------------\n";   
+   }
 
    seg_eigs_.resize(bravais_->GetNumberPaths());
 
@@ -3416,7 +3498,9 @@ MaxwellBandGap::MaxwellBandGap(ParMesh & pmesh,
                                Coefficient & muCoef,
                                bool midPts,
                                int max_ref,
-                               double tol)
+                               double tol, 
+                               int groupID, 
+                               int groupNum)
    : Homogenization(pmesh.GetComm())
      //, pmesh_(&pmesh)
      //, bravais_(&bravais)
@@ -3424,7 +3508,7 @@ MaxwellBandGap::MaxwellBandGap(ParMesh & pmesh,
      //, muCoef_(&muCoef)
 {
    disp_ = new MaxwellDispersion(pmesh, bravais, samp_pow, epsCoef, muCoef,
-                                 midPts, max_ref, 24, tol);
+                                 midPts, max_ref, 24, tol, groupID, groupNum);
 }
 
 MaxwellBandGap::~MaxwellBandGap()

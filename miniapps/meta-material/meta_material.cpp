@@ -47,6 +47,14 @@ int main(int argc, char *argv[])
    bool bandGapCalc = false;
    bool band_gap_mid_pts = false;
 
+   // unless otherwise defined there is only one group of size num_procs
+   int MPI_GROUPS = 1;  
+   int groupID = 0;
+   int localID = myid;  // rank# inside the group
+   int globalID = myid; // rank# globally
+   int group_size = num_procs;
+   MPI_Comm group_comm = comm;
+
    double a = -1.0, b = -1.0, c = -1.0;
    double alpha = -1.0, beta = -1.0, gamma = -1.0;
    double alpha_deg = -1.0, beta_deg = -1.0, gamma_deg = -1.0;
@@ -157,6 +165,8 @@ int main(int argc, char *argv[])
    args.AddOption(&bandGapCalc, "-bg", "--band-gap",
                   "-no-bg", "--no-band-gap",
                   "Enable or disable band gap calculation.");
+   args.AddOption(&MPI_GROUPS, "-g", "--mpi-groups",
+                  "Number of MPI Groups to divide the work between.");
    args.Parse();
    if (!args.Good())
    {
@@ -171,6 +181,59 @@ int main(int argc, char *argv[])
    {
       args.PrintOptions(cout);
    }
+
+
+   // TO-DO:
+   // currently this group costruction scheme allows for groups with different # of
+   // ranks which doesn't really work well for us since we want to preserve vector mapping 
+   // between the groups
+   if (MPI_GROUPS > 1)
+   {
+      int allGroupsGet = num_procs / MPI_GROUPS;
+/*
+      // numprocerssors can be divided evenly between all MPI_GROUPS
+      if ((num_procs - allGroupsGet*MPI_GROUPS) == 0)
+      {
+          groupID =  globalID/allGroupsGet;
+      }
+      else { 
+
+         int extraRank = (num_procs - allGroupsGet*MPI_GROUPS); 
+
+         if (globalID/(allGroupsGet+1) < extraRank)
+         {
+            groupID =  globalID/(allGroupsGet+1);
+         }       
+         else {
+            groupID = extraRank+ (globalID - extraRank*(allGroupsGet+1))/allGroupsGet; 
+         }
+      }
+*/
+      int numSymP = 4;
+/*      if (globalID < num_procs / MPI_GROUPS)
+         groupID = 0;
+      else groupID = 1;
+*/
+      groupID = globalID % numSymP;
+
+      MPI_Comm_split(comm, groupID, globalID, &group_comm);
+      MPI_Comm_rank(group_comm, &localID);
+      MPI_Comm_size(group_comm, &group_size);
+
+      for ( int i = 0; i < num_procs; i++)
+      {
+         if (globalID == i)
+            cout << "gID=" << globalID << "\tgroupID=" << groupID 
+                 << "\tlocalID=" << localID 
+                 << "\tgroup_size=" << group_size << endl;
+         MPI_Barrier(comm);
+      }
+   }
+   else {
+      groupID = -1;
+   }
+
+//   exit(0);
 
    if ( alpha_deg > 0.0 ) { alpha = alpha_deg * M_PI / 180.0; }
    if (  beta_deg > 0.0 ) { beta =  beta_deg * M_PI / 180.0; }
@@ -296,6 +359,7 @@ int main(int argc, char *argv[])
 
    if (densityCalc)
    {
+      if (!globalID) tic();
       LatticeCoefficient rhoCoef(*bravais, lcf, 0.0, rho);
 
       // The density computation does not require a periodic mesh
@@ -303,7 +367,7 @@ int main(int argc, char *argv[])
       mesh_rho->EnsureNCMesh();
       mesh_rho->UniformRefinement();
       mesh_rho->UniformRefinement();
-      ParMesh *pmesh_rho = new ParMesh(MPI_COMM_WORLD, *mesh_rho);
+      ParMesh *pmesh_rho = new ParMesh(comm, *mesh_rho);
       delete mesh_rho;
 
       meta_material::Density density(*pmesh_rho, rho,
@@ -338,10 +402,13 @@ int main(int argc, char *argv[])
          density.WriteVisItFields(oss_prefix.str(), "Density");
       }
       delete pmesh_rho;
+
+      if (!globalID) cout << "@@densityCalc Time: " << toc() << endl;
    }
 
    if (stiffnessCalc)
    {
+      if (!localID) tic();
       double lambda = E * nu / ( (1.0 + nu) * (1.0 - 2.0 * nu) );
       double mu = 0.5 * E / (1.0 + nu);
       double mat_scale = 1.0e-6;
@@ -369,7 +436,8 @@ int main(int argc, char *argv[])
       mesh_C->UniformRefinement();
       mesh_C->EnsureNCMesh();
 
-      ParMesh *pmesh_C = new ParMesh(MPI_COMM_WORLD, *mesh_C);
+//      ParMesh *pmesh_C = new ParMesh(MPI_COMM_WORLD, *mesh_C);
+      ParMesh *pmesh_C = new ParMesh(comm, *mesh_C);
       delete mesh_C;
 
       meta_material::StiffnessTensor elasticity(*pmesh_C,
@@ -415,6 +483,7 @@ int main(int argc, char *argv[])
          elasticity.WriteVisItFields(oss_prefix.str(), "StiffnessTensor");
       }
       delete pmesh_C;
+
    }
 
    if (bandGapCalc)
@@ -432,7 +501,7 @@ int main(int argc, char *argv[])
       }
       // mesh_bg->UniformRefinement();
 
-      ParMesh *pmesh_bg = new ParMesh(MPI_COMM_WORLD, *mesh_bg);
+      ParMesh *pmesh_bg = new ParMesh(group_comm, *mesh_bg);
       delete mesh_bg;
 
       meta_material::MaxwellBandGap maxwell_bg(*pmesh_bg, *bravais,
@@ -440,7 +509,8 @@ int main(int argc, char *argv[])
                                                epsCoef, muCoef,
                                                band_gap_mid_pts,
                                                band_gap_max_ref,
-                                               band_gap_tol);
+                                               band_gap_tol,
+					       groupID, MPI_GROUPS);
 
       vector<double> bg;
       maxwell_bg.GetHomogenizedProperties(bg);
@@ -465,7 +535,8 @@ int main(int argc, char *argv[])
       }
       delete pmesh_bg;
    }
-
+   MPI_Barrier(comm);
+ 
    // delete vf0;
    // delete vf1;
    // delete L2FESpace;

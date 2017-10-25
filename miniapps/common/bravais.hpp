@@ -123,6 +123,8 @@ public:
    virtual mfem::Mesh *
    GetPeriodicWignerSeitzMesh(bool tetMesh = false) const = 0;
 
+   int slSize() { return sl_.size(); }
+
 protected:
    BravaisLattice(unsigned int dim);
 

@@ -13,7 +13,7 @@
 MFEM_VERSION         = 30301
 MFEM_USE_MPI         = YES
 MFEM_USE_METIS_5     = NO
-MFEM_DEBUG           = NO
+MFEM_DEBUG           = YES
 MFEM_USE_GZSTREAM    = NO
 MFEM_USE_LIBUNWIND   = NO
 MFEM_USE_LAPACK      = YES
@@ -36,13 +36,13 @@ MFEM_USE_SIDRE       = NO
 # Compiler, compile options, and link options
 MFEM_CXX       = mpicxx
 MFEM_CPPFLAGS  =
-MFEM_CXXFLAGS  = -O3
+MFEM_CXXFLAGS  = -g -Wall
 MFEM_TPLFLAGS  =   -I$(MFEM_DIR)/../hypre-2.10.0b_quartz/src/hypre/include
 MFEM_INCFLAGS  = -I$(MFEM_INC_DIR) $(MFEM_TPLFLAGS)
 MFEM_FLAGS     = $(MFEM_CPPFLAGS) $(MFEM_CXXFLAGS) $(MFEM_INCFLAGS)
 MFEM_LIBS      = -L$(MFEM_LIB_DIR) -lmfem -L$(MFEM_DIR)/../metis-4.0 -lmetis -L$(MFEM_DIR)/../hypre-2.10.0b_quartz/src/hypre/lib -lHYPRE -llapack -lblas -lrt
 MFEM_LIB_FILE  = $(MFEM_LIB_DIR)/libmfem.a
-MFEM_BUILD_TAG = Linux quartz1148 x86_64
+MFEM_BUILD_TAG = Linux quartz2498 x86_64
 MFEM_PREFIX    = ./mfem
 MFEM_INC_DIR   = $(MFEM_DIR)
 MFEM_LIB_DIR   = $(MFEM_DIR)

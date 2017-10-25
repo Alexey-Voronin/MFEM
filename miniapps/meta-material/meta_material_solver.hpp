@@ -13,6 +13,8 @@
 #define MFEM_META_MATERIAL_SOLVER
 
 #include "../../config/config.hpp"
+#include <fstream>
+#include <iostream>
 
 #ifdef MFEM_USE_MPI
 
@@ -145,6 +147,7 @@ private:
    VisData      * vd_;
    socketstream * sock_;
    socketstream * sock2_;
+
 };
 
 class StiffnessTensor : public Homogenization
@@ -589,7 +592,7 @@ class MaxwellBlochWaveSolver
 public:
    MaxwellBlochWaveSolver(ParMesh & pmesh, BravaisLattice & bravais,
                           Coefficient & epsCoef, Coefficient & muCoef,
-                          int max_ref = 2, int nev = 24, double tol = 0.05);
+                          int max_ref = 2, int nev = 24, double tol = 0.05, int groupID_ = 0, int groupNum = 1);
    ~MaxwellBlochWaveSolver();
 
    // Where kappa is the phase shift vector
@@ -620,6 +623,8 @@ private:
    int max_lvl_;
    int nev_;
    double tol_;
+   int groupID_;
+   int groupNum_;
 
    std::vector<ParMesh*> pmesh_;
    std::vector<MaxwellBlochWaveEquation*> mbwe_;
@@ -647,7 +652,7 @@ public:
                      int sample_power,
                      Coefficient & epsCoef, Coefficient & muCoef,
                      bool midPts = false, int max_ref = 2,
-                     int nev = 24, double tol = 0.05);
+                     int nev = 24, double tol = 0.05, int groupID = -1, int groupNum = 1);
    ~MaxwellDispersion();
 
    const std::vector<std::vector<std::map<int,std::vector<double> > > > &
@@ -694,8 +699,13 @@ private:
    int n_div_;
    int samp_pow_;
    int nev_;
-
+   
    bool midPts_;
+
+   int myid_;
+   int numProcs_;
+   int groupID_;
+   int groupNum_;
 };
 
 class MaxwellBandGap : public Homogenization
@@ -704,7 +714,7 @@ public:
    MaxwellBandGap(ParMesh & pmesh, BravaisLattice & bravais,
                   int samp_pow,
                   Coefficient & epsCoef, Coefficient & muCoef,
-                  bool midPts = false, int max_ref = 2, double tol = 0.05);
+                  bool midPts = false, int max_ref = 2, double tol = 0.05, int groupID = -1, int groupNum = 1);
    ~MaxwellBandGap();
 
    void GetHomogenizedProperties(std::vector<double> & p);

@@ -32,7 +32,7 @@
 #define MFEM_USE_MPI
 
 // Enable debug checks in MFEM.
-// #define MFEM_DEBUG
+#define MFEM_DEBUG
 
 // Enable gzstream in MFEM.
 // #define MFEM_USE_GZSTREAM
